@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "autoprefixer": "^10.5.4",
+    "axios": "^1.19.0",
+    "lucide-react": "^1.33.0",
+    "maplibre-gl": "^6.4.1",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^4.3.3",
+    "zustand": "^5.0.15"
+  }
+}

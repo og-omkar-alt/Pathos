@@ -1,0 +1,13 @@
+{
+  "before_heuristic": {
+    "component_break_density": 5.421,
+    "connectivity_ratio": 0.026
+  },
+  "after_heuristic": {
+    "component_break_density": 3.919,
+    "connectivity_ratio": 0.027
+  },
+  "nodes": 55280,
+  "edges": 48605,
+  "pixel_size_m": 10.0
+}

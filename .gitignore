@@ -1,0 +1,36 @@
+# Python cache & environment
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+env/
+.vscode/
+
+# Node & Next.js build files
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+*.log
+
+# Deep Learning weights & checkpoints (Too large for GitHub)
+*.pth
+*.pt
+checkpoints_*/
+checkpoints/
+
+# Geospatial Rasters, SAR, and Datasets
+*.tif
+*.tiff
+*.aux.xml
+*.pkl
+ahmedabad_processed/
+ahmedabad_outputs/*.tif
+ahmedabad_outputs/*.pkl
+sentinel1_training/
+spacenet_prepared/
+S1A_*
+
+# Keep metric JSONs if needed
+!ahmedabad_outputs/*.json
