@@ -7,30 +7,36 @@ venv/
 env/
 .vscode/
 
-# Node & Next.js build files
+# Node & Frontend build files (Updated for 'setu-frontend')
 node_modules/
-frontend/node_modules/
-.next/
-frontend/.next/
+setu-frontend/node_modules/
+setu-frontend/dist/
 *.log
 
-# Deep Learning weights & checkpoints (Too large for GitHub)
+# Deep Learning weights & checkpoints
 *.pth
 *.pt
 checkpoints_*/
 checkpoints/
 
-# Geospatial Rasters, SAR, and Datasets
+# Geospatial Rasters, SAR, Datasets, and Massive XMLs
 *.tif
 *.tiff
 *.aux.xml
 *.pkl
+*.osm
+*.gpkg
+*.grd
+
+# Large Data Folders & Caches
+ahmedabad_data/
 ahmedabad_processed/
-ahmedabad_outputs/*.tif
-ahmedabad_outputs/*.pkl
+cache/
 sentinel1_training/
 spacenet_prepared/
 S1A_*
+ahmedabad_outputs/*.tif
+ahmedabad_outputs/*.pkl
 
 # Keep metric JSONs if needed
 !ahmedabad_outputs/*.json

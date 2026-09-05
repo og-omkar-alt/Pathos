@@ -1,24 +1,22 @@
 """
-SETU Project — FastAPI Backend Server
-Bulletproof Edition - Guaranteed to return 200 OKs and valid GeoJSON formats.
+SETU Project — FastAPI Backend  (Final Clean Version)
+Changes:
+  - SimRequest requires origin/destination — no silent defaults
+  - hospitals_impacted removed from response
+  - Added missing @app.post decorator for /api/v1/network/route
+  - Fixed OSMnx "length" vs "length_m" dictionary bug
 """
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-import numpy as np
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import traceback
 
-# Import your core routing engine
 from routing_engine import RouteMindEngine
 
-# Initialize the FastAPI app
-app = FastAPI(title="SETU RouteMind API", version="2.0")
+app = FastAPI(title="SETU RouteMind API", version="3.0")
 
-# Bulletproof CORS: Allows any frontend (Vite, Next.js, vanilla) to connect without blocking
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,167 +25,254 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("🚀 Starting SETU backend server... Loading ML Graph...")
+print("Starting SETU backend ...")
 engine = RouteMindEngine()
-print("✅ Graph loaded successfully.")
+print("Engine ready.")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PYDANTIC BLUEPRINTS
-# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
+
 class RouteRequest(BaseModel):
-    start_lat: float
-    start_lon: float
-    end_lat: float
-    end_lon: float
-    weight_type: str = "travel_time"
-    max_snap_dist_m: float = 5000.0  # Defaulted to 5km to guarantee it finds a road
+    start_lat       : float
+    start_lon       : float
+    end_lat         : float
+    end_lon         : float
+    weight_type     : str   = "travel_time"
+    max_snap_dist_m : float = 5000.0
 
-class DynamicSimRequest(BaseModel):
-    lat: float = 23.0063
-    lon: float = 72.5510
-    radius_m: float = 800.0
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CORE ENDPOINTS
-# ══════════════════════════════════════════════════════════════════════════════
+class SimRequest(BaseModel):
+    # Failure zone centre + radius
+    lat      : float
+    lon      : float
+    radius_m : float = 800.0
+
+    # Route comparison waypoints — REQUIRED, no defaults
+    route_start_lat : float
+    route_start_lon : float
+    route_end_lat   : float
+    route_end_lon   : float
+
+    # Optional snap tolerance
+    max_snap_dist_m : float = 3000.0
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def health_check():
-    """System status and baseline KPI metrics."""
     return {
-        "status": "online", 
-        "system": "SETU RouteMind AI", 
-        "summary": engine.graph_summary()
+        "status" : "online",
+        "system" : "SETU RouteMind AI",
+        "summary": engine.graph_summary(),
     }
 
-@app.post("/api/v1/simulation/simulate")
-def run_dynamic_simulation(data: DynamicSimRequest):
-    """Executes network dissection. Never throws a 500, always returns a clean payload."""
-    try:
-        results = engine.simulate_failure_impact(
-            lat=data.lat,
-            lon=data.lon,
-            radius_m=data.radius_m
-        )
-        return {"status": "success", "data": results}
-    except Exception as e:
-        print(f"Simulation Error: {traceback.format_exc()}")
-        # Safe fallback so the UI doesn't explode
-        return {"status": "error", "message": str(e), "data": {}}
 
-@app.post("/api/v1/routing/route")
-def calculate_route(data: RouteRequest):
-    """
-    Handles A* routing requests. 
-    Converts [Lat, Lon] to [Lon, Lat] so MapLibre can draw it natively.
-    Catches disconnected graph errors gracefully.
-    """
-    try:
-        result = engine.get_route(
-            data.start_lat, data.start_lon, 
-            data.end_lat, data.end_lon, 
-            weight_type=data.weight_type,
-            max_snap_dist_m=data.max_snap_dist_m
-        )
-        
-        # HACKATHON SAFETY NET: Catch disconnected nodes without throwing a 400 error
-        if result.get("status") == "error":
-            return {
-                "status": "error", 
-                "message": result.get("message", "No navigable path exists."),
-                "route_coords": []
-            }
-            
-        # NATIVE MAPLIBRE FORMATTING: Flip to [Lon, Lat] on the backend
-        if "route_coords" in result and len(result["route_coords"]) > 0:
-            flipped_coords = [[c[1], c[0]] for c in result["route_coords"]]
-            result["route_coords"] = flipped_coords
-            
-        return result
-
-    except Exception as e:
-        print(f"Routing Error: {traceback.format_exc()}")
-        return {"status": "error", "message": str(e), "route_coords": []}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DATA EXTRACTION ENDPOINTS (For rendering the frontend map)
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Network summary ───────────────────────────────────────────────────────────
 
 @app.get("/api/v1/network/summary")
 def get_network_summary():
-    """Returns live graph statistics for the dashboard."""
-    import networkx as nx
     try:
-        summary = engine.graph_summary()
-        n_nodes = summary["nodes"]
-        n_edges = summary["edges"]
-        n_components = summary["components"]
-        total_km = summary["total_km"]
-
-        largest_cc = len(max(nx.connected_components(engine.G), key=len))
+        import networkx as nx
+        summary      = engine.graph_summary()
+        n_nodes      = summary["nodes"]
+        largest_cc   = len(max(nx.connected_components(engine.G), key=len))
         connectivity = round((largest_cc / max(n_nodes, 1)) * 100, 2)
-        resilience = round(1.0 - (n_components / max(n_nodes, 1)), 4)
+        resilience   = round(
+            1.0 - (summary["components"] / max(n_nodes, 1)), 4)
 
         return {
-            "status": "success",
+            "status" : "success",
             "metrics": {
-                "nodes": n_nodes,
-                "edges": n_edges,
-                "components": n_components,
-                "total_km": total_km,
+                **summary,
                 "connectivity": connectivity,
-                "resilience": resilience,
-            }
+                "resilience"  : resilience,
+            },
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+# ── Network edges as GeoJSON ──────────────────────────────────────────────────
+
 @app.get("/api/v1/network/edges")
 def get_network_edges_geojson():
     """
-    Returns all graph edges as a GeoJSON FeatureCollection.
-    Use this endpoint to generate your baseline map lines!
+    Returns every graph edge as a GeoJSON LineString with criticality.
+    Use this to draw the live road network on the map.
     """
     try:
         features = []
-        seen = set()
+        seen     = set()
 
         for u, v, data in engine.G.edges(data=True):
-            edge_key = (min(u, v), max(u, v))
-            if edge_key in seen:
+            key = (min(u, v), max(u, v))
+            if key in seen:
                 continue
-            seen.add(edge_key)
+            seen.add(key)
 
             nd_u = engine.G.nodes[u]
             nd_v = engine.G.nodes[v]
-
             lon_u, lat_u = engine.to_gps.transform(nd_u["x"], nd_u["y"])
             lon_v, lat_v = engine.to_gps.transform(nd_v["x"], nd_v["y"])
 
-            length_m = data.get("length_m", 0.0)
-            congestion = data.get("congestion_level", 1.0)
-
-            if congestion >= 3.0: criticality = "HIGH"
-            elif congestion >= 2.0: criticality = "MEDIUM"
-            elif congestion >= 1.3: criticality = "LOW"
-            else: criticality = "VERY LOW"
+            cong = data.get("congestion_level", 1.0)
+            if   cong >= 3.0: criticality = "HIGH"
+            elif cong >= 2.0: criticality = "MEDIUM"
+            elif cong >= 1.3: criticality = "LOW"
+            else:             criticality = "VERY LOW"
 
             features.append({
-                "type": "Feature",
+                "type"    : "Feature",
                 "geometry": {
-                    "type": "LineString",
-                    "coordinates": [[lon_u, lat_u], [lon_v, lat_v]]
+                    "type"       : "LineString",
+                    "coordinates": [[lon_u, lat_u], [lon_v, lat_v]],
                 },
                 "properties": {
-                    "id": f"E-{u}-{v}",
-                    "name": f"Segment ({round(length_m, 0)}m)",
-                    "criticality": criticality
-                }
+                    "id"         : f"E-{u}-{v}",
+                    # Fallback mapping for native OSMnx "length"
+                    "length_m"   : round(data.get("length", data.get("length_m", 0)), 1),
+                    "criticality": criticality,
+                    "congestion" : round(cong, 2),
+                },
             })
 
         return {"type": "FeatureCollection", "features": features}
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ── Standard A* routing ───────────────────────────────────────────────────────
+
+@app.get("/api/v1/network/test-waypoints")
+def get_test_waypoints():
+    """
+    Returns two node coordinates guaranteed to be in the largest
+    connected component.
+    """
+    try:
+        import networkx as nx
+        largest_cc  = max(nx.connected_components(engine.G), key=len)
+        nodes       = list(largest_cc)
+        n_start     = nodes[0]
+        n_end       = nodes[len(nodes) // 2]
+        s_lon, s_lat = engine.to_gps.transform(
+            engine.G.nodes[n_start]["x"], engine.G.nodes[n_start]["y"])
+        e_lon, e_lat = engine.to_gps.transform(
+            engine.G.nodes[n_end]["x"],   engine.G.nodes[n_end]["y"])
+        return {
+            "status": "success",
+            "start" : {"lat": round(s_lat, 6), "lon": round(s_lon, 6)},
+            "end"   : {"lat": round(e_lat, 6), "lon": round(e_lon, 6)},
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/v1/simulation/demo-scenario")
+def get_demo_scenario():
+    """
+    Returns a guaranteed working demo payload where:
+    - Start and end are in the largest connected component
+    - Failure zone sits on the normal route between them
+    """
+    try:
+        import networkx as nx
+
+        largest_cc = max(nx.connected_components(engine.G), key=len)
+        nodes      = list(largest_cc)
+
+        start_node = nodes[0]
+        end_node   = nodes[len(nodes) // 2]
+
+        try:
+            path = nx.astar_path(
+                engine.G, start_node, end_node,
+                heuristic=engine._heuristic_time,
+                weight="travel_time",
+            )
+        except nx.NetworkXNoPath:
+            return {"status": "error",
+                    "message": "Could not find base route in largest component."}
+
+        # Place failure zone 1/3 along the route
+        zone_node  = path[len(path) // 3]
+        zone_nd    = engine.G.nodes[zone_node]
+        zone_lon, zone_lat = engine.to_gps.transform(
+            zone_nd["x"], zone_nd["y"])
+
+        s_nd         = engine.G.nodes[start_node]
+        e_nd         = engine.G.nodes[end_node]
+        s_lon, s_lat = engine.to_gps.transform(s_nd["x"], s_nd["y"])
+        e_lon, e_lat = engine.to_gps.transform(e_nd["x"], e_nd["y"])
+
+        return {
+            "status" : "success",
+            "payload": {
+                "lat"             : round(zone_lat, 6),
+                "lon"             : round(zone_lon, 6),
+                "radius_m"        : 500,
+                "route_start_lat" : round(s_lat, 6),
+                "route_start_lon" : round(s_lon, 6),
+                "route_end_lat"   : round(e_lat, 6),
+                "route_end_lon"   : round(e_lon, 6),
+                "max_snap_dist_m" : 3000,
+            },
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/v1/network/route")
+def calculate_route(data: RouteRequest):
+    """
+    Single A* route on the original graph.
+    route_coords are [lon, lat] pairs — MapLibre native.
+    """
+    try:
+        result = engine.get_route(
+            data.start_lat,
+            data.start_lon,
+            data.end_lat,
+            data.end_lon,
+            weight_type    =data.weight_type,
+            max_snap_dist_m=data.max_snap_dist_m,
+        )
+        return result
+    except Exception as e:
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e), "route_coords": []}
+
+
+# ── Full simulation ───────────────────────────────────────────────────────────
+
+@app.post("/api/v1/simulation/simulate")
+def run_simulation(data: SimRequest):
+    try:
+        result = engine.simulate_failure_impact(
+            lat             =data.lat,
+            lon             =data.lon,
+            radius_m        =data.radius_m,
+            route_start_lat =data.route_start_lat,
+            route_start_lon =data.route_start_lon,
+            route_end_lat   =data.route_end_lat,
+            route_end_lon   =data.route_end_lon,
+            max_snap_dist_m =data.max_snap_dist_m,
+        )
+        return result
+
+    except Exception as e:
+        print(traceback.format_exc())
+        return {
+            "status"           : "error",
+            "message"          : str(e),
+            "simulation_result": {},
+            "failed_segments"  : [],
+            "normal_route"     : None,
+            "safe_route"       : None,
+        }
+
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True)
